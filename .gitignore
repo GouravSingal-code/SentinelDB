@@ -1,0 +1,24 @@
+# ── Secrets — never commit these ──────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+instance-params.json
+
+# ── Node ──────────────────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Editors ───────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+
+# ── Generated files (regenerate with: node generate-compose.js) ───────────────
+omnistrate-compose.yaml
+
+# ── Docker volumes / build artifacts ──────────────────────────────────────────
+*.log
