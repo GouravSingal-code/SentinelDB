@@ -239,3 +239,38 @@ postgres max_connections = (pgbouncer replicas × pool size per pod) + headroom
 The API pool size is independent — PgBouncer queues excess client connections, so the API can have more concurrent connections than Postgres allows without causing errors.
 
 If the numbers don't add up, `node generate-compose.js` will fail with a clear error before generating the YAML.
+
+---
+
+## Current Failure Behavior
+
+If the **primary goes down**, the system degrades gracefully:
+
+- **Writes** — fail fast. The write circuit breaker opens after a few failures, and the API returns `503` for all write requests. No data corruption or split-brain risk.
+- **Reads** — continue from the replica. The replica serves reads from its last consistent state. If the replica also goes down, the read circuit breaker opens and reads fall back to the write pool (which will also 503 if the primary is down).
+- **Recovery** — when Omnistrate restarts the primary pod, it comes back on the same EBS volume with all data intact. WAL streaming resumes, and the replica catches up automatically.
+
+This is a deliberate tradeoff: **data safety over write availability**. Writes are unavailable for the duration of the pod restart (typically 1–2 minutes), but there is zero risk of data loss or divergence.
+
+---
+
+## Future Scope: Automated Failover
+
+Right now, if the primary goes down, writes are unavailable until Omnistrate restarts the pod. This is safe but not ideal for production. The next step would be adding automated failover using [Patroni](https://github.com/patroni/patroni), so the replica can be promoted to primary automatically.
+
+**What would change:**
+
+- Merge `postgres-primary/` and `postgres-replica/` into one image with Patroni. Patroni decides at boot whether a node is leader or replica.
+- Add a 3-node etcd cluster for leader election (lightweight — runs on `t4g.micro`, ~$25/month).
+- PgBouncer discovers the current leader via Patroni's REST API instead of a fixed hostname.
+- WAL-G moves into the unified image so whichever node becomes leader takes over backups.
+
+**What stays the same:**
+
+- The API and PgBouncer layers don't change. PgBouncer already sits between the API and Postgres, so swapping the backend from a fixed hostname to a Patroni-resolved leader is just a config change.
+- The circuit breaker already handles the brief failover window (~5 seconds of 503s).
+- The read-to-write fallback already handles the post-failover state where one node serves both reads and writes.
+
+**Why it's not implemented here:**
+
+Patroni + etcd is the right choice for production, but adds significant complexity for a prototype — etcd itself needs to be highly available, leader election requires fencing to prevent split-brain, and the promotion/demotion paths need thorough testing. The current design prioritizes data safety and simplicity: writes fail cleanly rather than risking data divergence.
